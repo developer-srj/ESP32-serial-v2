@@ -1,4 +1,4 @@
-# ESP32-Serial v2 (Desktop Edition)
+# ESP32-Serial v2
 
 A **modern desktop serial monitor** for ESP32, built with **Python + PyQt6**, inspired by the original [ESP32-Serial (Web Edition)](https://github.com/developer-srj/ESP32-serial).
 This version provides a **faster, more responsive** UI without websockets, while keeping the same clean dark theme design.
