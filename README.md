@@ -128,6 +128,7 @@ export PATH="$HOME/ESP32-serial-v2:$PATH"
 
 ```bash
 sudo ln -s $HOME/ESP32-serial-v2/run.sh /usr/local/bin/esp32-serial
+sudo ln -s $HOME/ESP32-serial-v2/esp32_serial_monitor.py /usr/local/bin/esp32_serial_monitor.py
 ```
 
 ### 3. Run from anywhere
