@@ -30,13 +30,13 @@ Shout out to **[@parthbhat13](https://github.com/parthbhat13)** for the idea & g
 ---
 ## Features
 
-✅ Cross-platform (Linux, Mac, Windows\*)
-✅ Clean dark-themed UI (PyQt6)
-✅ Dual terminal view (Debug + Logs)
-✅ Autoscroll & Timestamp support
-✅ Save logs (separate Debug + ESP files)
-✅ Clear terminal buttons
-✅ Refresh ports list
+* Cross-platform (Linux, Mac, Windows\*)
+* Clean dark-themed UI (PyQt6)
+* Dual terminal view (Debug + Logs)
+* Autoscroll & Timestamp support
+* Save logs (separate Debug + ESP files)
+* Clear terminal buttons
+* Refresh ports list
 
 \* Tested mainly on Linux. Windows/Mac may need tweaks.
 
