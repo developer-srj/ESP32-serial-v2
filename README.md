@@ -20,6 +20,14 @@ Shout out to **[@parthbhat13](https://github.com/parthbhat13)** for the idea & g
 
 ---
 
+
+## Screenshots
+
+### Main Interface
+![ESP32-Serial v2 Main Window](docs/screenshot-main.png)
+
+
+---
 ## Features
 
 ✅ Cross-platform (Linux, Mac, Windows\*)
