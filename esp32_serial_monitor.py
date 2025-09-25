@@ -11,10 +11,8 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QAction, QTextCursor
 
-
 ANSI_RE = re.compile(r'\x1b\[([0-9;]*)m')
 
-# Basic color map for ANSI codes
 ANSI_COLOR = {
     30: "#000000", 31: "#ff4d4d", 32: "#00ff00", 33: "#ffff00",
     34: "#4da3ff", 35: "#ff66ff", 36: "#00ffff", 37: "#e0e0e0",
@@ -22,7 +20,6 @@ ANSI_COLOR = {
     94: "#a0c8ff", 95: "#ff9cff", 96: "#a0ffff", 97: "#ffffff"
 }
 
-# Fallback color by log type if no ANSI present
 LOG_COLORS = {
     'error': "#FF0000",
     'warning': "#FFFF00",
@@ -32,36 +29,41 @@ LOG_COLORS = {
     'default': "#e0e0e0"
 }
 
-
 def html_escape(s: str) -> str:
     return (s.replace("&", "&amp;")
              .replace("<", "&lt;")
              .replace(">", "&gt;"))
 
-
 def classify_line(s: str) -> str:
-    t = s.strip().lower()
-    # common ESP/Arduino-esque tags
-    if "\x1b[" in s:  # ANSI present; we'll honor that later
+    t = s.strip()
+    # ESP-IDF log detection
+    m = re.match(r'^([IWEVD])\s*\(\d+\)', t)
+    if m:
+        level = m.group(1)
+        return {
+            'I': 'info',
+            'W': 'warning',
+            'E': 'error',
+            'D': 'debug',
+            'V': 'verbose'
+        }.get(level, 'debug')
+    # ANSI fallback
+    if "\x1b[" in t:
         return 'ansi'
-    if any(x in t for x in ("error", "fatal", "fail", "exception", "assert", " e ", "[e]", " e/")):
+    t_lower = t.lower()
+    if any(x in t_lower for x in ("error","fatal","fail","exception","assert")):
         return 'error'
-    if any(x in t for x in ("warn", "warning", " w ", "[w]", " w/")):
+    if any(x in t_lower for x in ("warn","warning")):
         return 'warning'
-    if any(x in t for x in ("info", " i ", "[i]", " i/")):
+    if any(x in t_lower for x in ("info",)):
         return 'info'
-    if any(x in t for x in ("debug", "dbg", " d ", "[d]", " d/")):
+    if any(x in t_lower for x in ("debug","dbg")):
         return 'debug'
-    if any(x in t for x in ("verb", "trace", " v ", "[v]", " v/")):
+    if any(x in t_lower for x in ("verb","trace")):
         return 'verbose'
-    return 'default'
-
+    return 'debug'
 
 def ansi_to_html(s: str) -> str:
-    """
-    Convert ANSI SGR color codes in s to HTML <span style="...">.
-    Supports color + bold. Resets on '0'.
-    """
     out = []
     last = 0
     open_span = False
@@ -76,25 +78,17 @@ def ansi_to_html(s: str) -> str:
         return ";".join(parts)
 
     for m in ANSI_RE.finditer(s):
-        # text before this code
         if m.start() > last:
             chunk = html_escape(s[last:m.start()])
-            if open_span:
-                out.append(chunk)
-            else:
-                out.append(chunk)
+            out.append(chunk)
         codes = m.group(1)
         last = m.end()
-
         if codes == "" or codes == "0":
-            # reset
             if open_span:
                 out.append("</span>")
                 open_span = False
             current_style.clear()
             continue
-
-        # parse individual codes
         for c in codes.split(";"):
             if not c:
                 continue
@@ -102,7 +96,6 @@ def ansi_to_html(s: str) -> str:
                 n = int(c)
             except ValueError:
                 continue
-
             if n == 0:
                 if open_span:
                     out.append("</span>")
@@ -112,11 +105,6 @@ def ansi_to_html(s: str) -> str:
                 current_style['bold'] = True
             elif 30 <= n <= 37 or 90 <= n <= 97:
                 current_style['color'] = ANSI_COLOR.get(n, LOG_COLORS['default'])
-            else:
-                # ignore other SGRs
-                pass
-
-        # open (or reopen) span reflecting new style
         if open_span:
             out.append("</span>")
             open_span = False
@@ -124,73 +112,40 @@ def ansi_to_html(s: str) -> str:
         if st:
             out.append(f'<span style="{st}">')
             open_span = True
-
-    # tail
     if last < len(s):
-        chunk = html_escape(s[last:])
-        out.append(chunk)
+        out.append(html_escape(s[last:]))
     if open_span:
         out.append("</span>")
-
     return "".join(out)
 
-
 class SerialMonitor(QMainWindow):
-    append_log = pyqtSignal(str, str)  # (target: "debug"|"esp", raw_line)
+    append_log = pyqtSignal(str, str)
 
     def __init__(self):
         super().__init__()
         self.serial_connection = None
         self.running = False
         self.read_thread = None
-
-        self.debug_buffer = []  # plain text for saving
-        self.esp_buffer = []    # plain text for saving
+        self.debug_buffer = []
+        self.esp_buffer = []
 
         self.setWindowTitle("ESP32 Debug & Logs Monitor")
         self.setGeometry(100, 100, 1100, 680)
         self.setStyleSheet("""
-            QMainWindow, QWidget {
-                background-color: #121212;
-                color: #e0e0e0;
-                font-family: 'Segoe UI';
-                font-size: 14px;
-            }
-            QHeaderView::section {
-                background-color: #1e1e1e;
-                color: #ffffff;
-            }
-            QPushButton {
-                background-color: #333;
-                color: #e0e0e0;
-                border: none;
-                border-radius: 8px;
-                padding: 6px 12px;
-            }
+            QMainWindow, QWidget { background-color: #121212; color: #e0e0e0; font-family: 'Segoe UI'; font-size: 14px; }
+            QHeaderView::section { background-color: #1e1e1e; color: #ffffff; }
+            QPushButton { background-color: #333; color: #e0e0e0; border: none; border-radius: 8px; padding: 6px 12px; }
             QPushButton:hover { background-color: #444; }
-            QComboBox, QCheckBox {
-                background-color: #333;
-                padding: 4px 8px;
-                border-radius: 6px;
-            }
-            QTextEdit {
-                background-color: #1c1c1c;
-                border-radius: 10px;
-                padding: 10px;
-                color: #e0e0e0;
-            }
-            QFrame#panel {
-                background-color: #1c1c1c;
-                border-radius: 12px;
-            }
-            QLabel#panelTitle {
-                font-size:16px; color:white; border-bottom: 2px solid #333; padding: 6px 2px;
-            }
+            QComboBox, QCheckBox { background-color: #333; padding: 4px 8px; border-radius: 6px; }
+            QTextEdit { background-color: #1c1c1c; border-radius: 10px; padding: 10px; color: #e0e0e0; }
+            QFrame#panel { background-color: #1c1c1c; border-radius: 12px; }
+            QLabel#panelTitle { font-size:16px; color:white; border-bottom: 2px solid #333; padding: 6px 2px; }
         """)
 
         self.append_log.connect(self.on_append_log)
+        self._setup_ui()
 
-        # ===== Menus =====
+    def _setup_ui(self):
         menubar = self.menuBar()
         file_menu = menubar.addMenu("&File")
         save_action = QAction("Save Logs…", self)
@@ -203,7 +158,6 @@ class SerialMonitor(QMainWindow):
         refresh_action.setShortcut("F5")
         refresh_action.triggered.connect(self.refresh_ports)
         tools_menu.addAction(refresh_action)
-
         clear_action = QAction("Clear Logs", self)
         clear_action.setShortcut("Ctrl+L")
         clear_action.triggered.connect(self.clear_logs)
@@ -215,10 +169,8 @@ class SerialMonitor(QMainWindow):
         about_action.triggered.connect(self.show_about)
         help_menu.addAction(about_action)
 
-        # ===== Controls Row =====
         controls_layout = QHBoxLayout()
         controls_layout.setSpacing(10)
-
         controls_layout.addWidget(QLabel("Port:"))
         self.port_combo = QComboBox()
         self.refresh_ports()
@@ -253,68 +205,57 @@ class SerialMonitor(QMainWindow):
         self.timestamp_chk = QCheckBox("Timestamp")
         self.timestamp_chk.setChecked(True)
         controls_layout.addWidget(self.timestamp_chk)
-
         controls_layout.addStretch()
 
-        # ===== Terminals =====
         self.debug_terminal = QTextEdit()
         self.debug_terminal.setReadOnly(True)
         self.debug_terminal.setAcceptRichText(True)
-
         self.esp_terminal = QTextEdit()
         self.esp_terminal.setReadOnly(True)
         self.esp_terminal.setAcceptRichText(True)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(self._wrap_terminal("Debug", self.debug_terminal))
-        splitter.addWidget(self._wrap_terminal("Logs", self.esp_terminal))
-        splitter.setSizes([1, 1])
+        splitter.addWidget(self._wrap_terminal("ESP Logs", self.esp_terminal))
+        splitter.setSizes([1,1])
 
-        # ===== Footer =====
         footer = QLabel()
         footer.setTextFormat(Qt.TextFormat.RichText)
         footer.setOpenExternalLinks(True)
-        # Qt rich text doesn't support dotted underline styles reliably; using standard underline.
         footer.setText(
             'Made with <span style="color: red; font-size:13px;">♥️</span> by '
-            '<a href="https://github.com/developer-srj/" '
-            'style="color: #9e9e9e; text-decoration: underline dashed; text-underline-offset: 3px;">'
-            'developer_SRJ</a>'
+            '<a href="https://github.com/developer-srj/" style="color: #9e9e9e; text-decoration: underline dashed;">developer_SRJ</a>'
         )
         footer.setAlignment(Qt.AlignmentFlag.AlignCenter)
         footer_container = QFrame()
         f_layout = QHBoxLayout(footer_container)
-        f_layout.setContentsMargins(0, 6, 0, 8)
+        f_layout.setContentsMargins(0,6,0,8)
         f_layout.addWidget(footer)
 
-        # ===== Main Layout =====
         central = QWidget()
         main_layout = QVBoxLayout(central)
-        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setContentsMargins(10,10,10,10)
         main_layout.addLayout(controls_layout)
-        main_layout.addWidget(splitter, 1)
-        main_layout.addWidget(footer_container, 0)
+        main_layout.addWidget(splitter,1)
+        main_layout.addWidget(footer_container,0)
         self.setCentralWidget(central)
 
     def _wrap_terminal(self, title, widget):
         frame = QFrame()
         frame.setObjectName("panel")
         layout = QVBoxLayout(frame)
-        layout.setContentsMargins(12, 10, 12, 12)
+        layout.setContentsMargins(12,10,12,12)
         label = QLabel(title)
         label.setObjectName("panelTitle")
         layout.addWidget(label)
         layout.addWidget(widget)
         return frame
 
-    # ====== Ports / Serial ======
     def refresh_ports(self):
         current = self.port_combo.currentText()
         self.port_combo.clear()
-        ports = serial.tools.list_ports.comports()
-        for p in ports:
+        for p in serial.tools.list_ports.comports():
             self.port_combo.addItem(p.device)
-        # restore selection if still present
         if current:
             idx = self.port_combo.findText(current)
             if idx >= 0:
@@ -353,34 +294,31 @@ class SerialMonitor(QMainWindow):
                 raw = self.serial_connection.readline().decode(errors="ignore").rstrip("\r\n")
                 if not raw:
                     continue
-                # Route: ANSI → ESP Logs, plain → Debug (like your web UI)
-                target = "esp" if "\x1b[" in raw else "debug"
+                if re.match(r'^[IWEVD]\s*\(\d+\)', raw) or re.match(r'^[IWEVD]/', raw) or "\x1b[" in raw:
+                    target = "esp"
+                else:
+                    target = "debug"
                 self.append_log.emit(target, raw)
             except Exception as e:
                 self.append_log.emit("debug", f"Serial Error: {e}")
                 break
 
-    # ===== Log handling (runs in UI thread) =====
-    def on_append_log(self, target: str, raw_line: str):
+    def on_append_log(self, target, raw_line):
         ts = f"[{datetime.datetime.now().strftime('%H:%M:%S')}] " if self.timestamp_chk.isChecked() else ""
-        display_line = ts + raw_line
-
-        # Decide colorization
-        if "\x1b[" in raw_line:
+        kind = classify_line(raw_line)
+        if kind == 'ansi':
             html_body = ansi_to_html(raw_line)
         else:
-            kind = classify_line(raw_line)
             color = LOG_COLORS.get(kind, LOG_COLORS['default'])
             html_body = f'<span style="color:{color}">{html_escape(raw_line)}</span>'
-
         html = f"{html_escape(ts)}{html_body}"
 
         if target == "esp":
             self._append_html(self.esp_terminal, html)
-            self.esp_buffer.append(display_line)
+            self.esp_buffer.append(ts + raw_line)
         else:
             self._append_html(self.debug_terminal, html)
-            self.debug_buffer.append(display_line)
+            self.debug_buffer.append(ts + raw_line)
 
     def _append_html(self, edit: QTextEdit, html: str):
         cur = edit.textCursor()
@@ -390,7 +328,6 @@ class SerialMonitor(QMainWindow):
         if self.autoscroll_chk.isChecked():
             edit.ensureCursorVisible()
 
-    # ===== File ops / UI actions =====
     def save_logs(self):
         folder = QFileDialog.getExistingDirectory(self, "Select folder to save logs")
         if not folder:
@@ -414,26 +351,18 @@ class SerialMonitor(QMainWindow):
         self.esp_buffer.clear()
 
     def show_about(self):
-        QMessageBox.about(
-            self,
-            "About ESP32 Serial Monitor",
-            (
-                "<b>ESP32 Debug & Logs Monitor</b><br>"
-                "Native Python (PyQt6 + pyserial) tool with dark UI, log coloring, and dual panes.<br><br>"
-                'Made with <span style="color:red;">♥️</span> by '
-                '<a href="https://github.com/developer-srj/">developer_SRJ</a>'
-            )
-        )
+        QMessageBox.about(self, "About ESP32 Serial Monitor",
+            ("<b>ESP32 Debug & Logs Monitor</b><br>"
+             "Native Python (PyQt6 + pyserial) tool with dark UI, log coloring, and dual panes.<br><br>"
+             'Made with <span style="color:red;">♥️</span> by '
+             '<a href="https://github.com/developer-srj/">developer_SRJ</a>'))
 
-    # ===== lifecycle =====
     def closeEvent(self, event):
         self.stop_serial()
         return super().closeEvent(event)
-
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     win = SerialMonitor()
     win.show()
     sys.exit(app.exec())
-
